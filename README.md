@@ -12,9 +12,10 @@ not part of the agent or required to run anything above.)
 ## Run it (3 commands)
 
 ```bash
-python -m unittest discover -s tests   # 1. 28 unit + regression tests
+python -m unittest discover -s tests   # 1. 65 unit + regression tests
 python -m evals.run                    # 2. 23 eval scenarios -> eval_report.md
-python -m agent                        # 3. chat with the agent
+python -m attacks.campaign            # 3. 50-attack injection campaign (round 1)
+python -m agent                        # 4. chat with the agent
 ```
 
 Try in the chat:
@@ -43,5 +44,6 @@ verify via get_booking_status instead of retrying), `timeout-not-booked`,
 - `agent/trace.py` - one JSONL trace per run
 - `evals/` - scripted-user scenarios, generated `eval_report.md`
 - `tests/` - unit + regression tests (`BUGS.md` describes the regressions)
+- `attacks/` - round-1 injection campaign: 50 attacks, full metadata, before/after results and the fixes they drove
 - `traces/timeout-after-success.jsonl` - checked-in end-to-end trace
 - `DESIGN.md` - design note; `BUGS.md` - three real bugs hit while building
