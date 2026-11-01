@@ -3,3 +3,4 @@ __pycache__/
 .agent_data/
 scripts/.demo_data/
 scripts/.trace_data/
+attacks/*_run.json
