@@ -54,8 +54,11 @@ class MockProviderAPI:
         self.cancel_attempts = {}  # booking_id -> count
         self._db = {"bookings": [], "idempotency": {}, "catalog": {}, "cancel_keys": {}}
         if db_path and os.path.exists(db_path):
-            with open(db_path) as f:
-                self._db = json.load(f)
+            try:
+                with open(db_path) as f:
+                    self._db = json.load(f)
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                os.replace(db_path, db_path + ".corrupt")  # quarantine, start fresh
 
     # ---- persistence (so a restarted process sees the same world) ----
     def _save(self):
