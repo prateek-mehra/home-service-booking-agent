@@ -1,4 +1,4 @@
-# Home-Service Booking Agent (Orange Invest Founding AI Engineer assignment)
+# Home-Service Booking Agent
 
 A chat agent that books, reschedules and cancels home-service errands against a
 mocked provider API. It never double-books, never acts without approval, and
