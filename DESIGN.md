@@ -78,6 +78,18 @@ not remembered memory. So forgetting "I prefer Suresh" stops proactive use of
 that preference; it does not stop the user from explicitly asking for Suresh
 again.
 
+## Trust boundary and untested surfaces
+
+The agent trusts its own local files (`session.json`, `memory.json`, mock DB):
+a local attacker who can write them can forge session state (campaign case
+E07) - they are operator-owned state, not a defense boundary, and hardening
+them (signing, permissions) is future work. Two injection-campaign rounds
+(attacks/, 50 cases each, all passing; round 2 = 46 new attacks + 4 round-1
+regression canaries) cover user-message, memory, state and hostile-tool-output
+surfaces. Honestly out of scope: review-text immunity is partly by construction
+(the scripted parser never reads free text); real-LLM prompt-level attacks,
+network attacks (there is no network) and multi-user concurrency are untested.
+
 ## Bounded execution
 
 Hard caps per run: 30 model turns, 40 tool calls, 300s wall-clock, 2 book
