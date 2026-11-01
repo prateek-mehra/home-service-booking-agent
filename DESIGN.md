@@ -96,9 +96,9 @@ text is tagged untrusted. Checked-in example:
 ### Annotated excerpt - timeout-after-success
 
 ```
-book(hold_id=hold-2467..., idempotency_key=19a7b...)   -> error: "timeout"
+book(hold_id=hold-9912..., idempotency_key=0e10...)   -> error: "timeout"
 # The agent does NOT retry or report yet - the outcome is unknown.
-get_booking_status(idempotency_key=19a7b...)           -> booked, booking_id=bk-a1d0...
+get_booking_status(idempotency_key=0e10...)            -> booked, booking_id=bk-6b9f...
 # The authoritative source says it actually booked. The agent reports
 # success from THIS, not from the timed-out call, and never rebooks.
 state: booking_in_progress -> done (reason: "booking verified")
