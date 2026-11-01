@@ -43,8 +43,8 @@ Provider reviews enter as untrusted data. They do not enter the model's intent
 parser or bypass the approval check.
 
 See [the architecture notes](docs/high-level-design.md), [test guide](docs/tests.md),
-and [eval guide](docs/evals.md) for the component responsibilities and what each
-check covers.
+the [eval guide](docs/evals.md), and the [attack catalog](docs/attacks.md) for
+the component responsibilities and what each check covers.
 
 ## Run it (3 commands)
 
@@ -95,7 +95,7 @@ flowchart TD
     ROOT --> EVALS[evals/<br/>scripted scenarios]
     EVALS --> REPORT[eval_report.md<br/>generated results]
     ROOT --> ATTACKS[attacks/<br/>injection campaigns]
-    ROOT --> DOCS[docs/<br/>tests, evals, HLD]
+    ROOT --> DOCS[docs/<br/>tests, evals, attacks, HLD]
     ROOT --> TRACES[traces/<br/>timeout recovery example]
     ROOT --> README[README.md<br/>quickstart and overview]
     ROOT --> DESIGN[DESIGN.md and BUGS.md]
