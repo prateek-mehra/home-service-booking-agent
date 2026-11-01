@@ -52,22 +52,35 @@ class ScriptedModel:
     # ---------------- parsing ----------------
     def _parse(self, message, state_summary):
         m = message.strip()
+        # normalise typographic quotes so negation guards cannot be dodged
+        # with a curly apostrophe ("don\u2019t cancel")
+        m = m.replace("\u2019", "'").replace("\u2018", "'") \
+             .replace("\u201c", '"').replace("\u201d", '"')
         low = m.lower()
 
         # memory commands
         if re.search(r"\bwhat do you remember\b|\bshow (me )?your memory\b|\bmy memory\b", low):
             return ModelResult("memory_view", raw=m)
+        if re.search(r"\bforget\s+(?:everything|all|everything about me|all my data|my data)\b", low):
+            return ModelResult("memory_forget_all", raw=m)
         forget = re.search(r"\bforget\s+(?:my\s+)?([\w\s]+)$", low)
         if forget and "booking" not in low:
             return ModelResult("memory_forget", payload={"key": self._memory_key(forget.group(1))}, raw=m)
         remember = re.search(r"\bremember (?:that )?(?:my\s+)?([\w\s]+?)\s+(?:is|are)\s+(.+)$", low)
         if remember:
+            key = self._memory_key(remember.group(1))
+            if key == "preferred_technician":
+                svc = self._service(remember.group(1).lower()) or self._service(low)
+                if svc:
+                    key = f"preferred_technician:{svc}"
             return ModelResult("memory_set",
-                               payload={"key": self._memory_key(remember.group(1)),
+                               payload={"key": key,
                                         "value": remember.group(2).strip()}, raw=m)
 
         # confirmations / rejections
-        if re.fullmatch(r"(yes+|yeah|yep|confirm|confirmed|book it|go ahead|ok|okay|sure|do it)[.!]?", low):
+        # explicit affirmatives only: bare acknowledgments ("ok", "sure") are
+        # not confirmations - a booking must never hinge on politeness
+        if re.fullmatch(r"(yes+|yeah|yep|confirm|confirmed|book it|go ahead|do it)[.!]?", low):
             return ModelResult("confirm", raw=m)
         if re.fullmatch(r"(no|nope|cancel that|don't|do not|stop)[.!]?", low):
             return ModelResult("reject", raw=m)
@@ -75,10 +88,19 @@ class ScriptedModel:
             return ModelResult("list_bookings", raw=m)
 
         # cancellations / reschedules of existing bookings
-        if re.search(r"\bcancel\b", low):
+        if (re.search(r"\bcancel\b", low)
+                and not re.search(
+                    r"\b(?:don't|dont|do not|never|not|stop|leave|keep)\b[^.!?]*\bcancel\b", low)
+                and not re.search(r"\bcancel\b[^.!?]*\b(?:not|never)\b", low)):
+            # "do not cancel ..." is the opposite of a cancel request, and so is
+            # a retraction like "I was going to cancel but decided not to"
             svc = self._service(low)
             return ModelResult("cancel_request", payload={"service": svc}, raw=m)
         mv = re.search(r"\b(?:move|reschedule|shift)\b", low)
+        if mv and re.search(
+                r"\b(?:don't|dont|do not|never|not|stop|leave|keep)\b[^.!?]*"
+                r"\b(?:move|reschedule|shift)\b", low):
+            mv = None  # "do not move / never reschedule ..." is not a reschedule request
         if mv:
             slots = self._slots(low)
             svc = self._service(low)
