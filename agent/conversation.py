@@ -12,6 +12,8 @@ reschedule sub-flows. All must-have invariants live here in code:
 """
 import datetime
 import hashlib
+import math
+import re
 import json
 import os
 import time
@@ -21,11 +23,44 @@ from .approval import Approval
 from .memory import MemoryStore
 from .mock_tools import MockProviderAPI, ToolError
 from .model import ScriptedModel
-from .sanitize import plain
+from .sanitize import clean_display, contains_secret, plain, quote_untrusted
 from .trace import TraceLogger
 
 REQUIRED_SLOTS = ["service", "area", "date_range"]
 WINDOWS = {"morning": (6, 12), "afternoon": (12, 17), "evening": (17, 21)}
+
+_SLOT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$")
+MAX_SANE_PRICE = 1_000_000
+
+
+def _valid_slot(s):
+    if not isinstance(s, str) or not _SLOT_RE.match(s):
+        return False
+    try:
+        return 0 <= int(s[11:13]) <= 23
+    except ValueError:
+        return False
+
+
+def _sane_price(p):
+    return (isinstance(p, (int, float)) and not isinstance(p, bool)
+            and math.isfinite(p) and 0 <= p <= MAX_SANE_PRICE)
+
+
+def _hold_ok(h):
+    """A hold response must carry the fields the booking flow relies on."""
+    return (isinstance(h, dict)
+            and isinstance(h.get("hold_id"), str)
+            and isinstance(h.get("expires_at"), (int, float))
+            and not isinstance(h.get("expires_at"), bool)
+            and "quoted_price" in h)
+
+
+def _review_excerpt(review, limit=500):
+    """Untrusted review text for display: redacted, control-stripped, flattened
+    to one line and length-capped so a hostile review cannot flood the chat."""
+    text = plain(quote_untrusted(review)).replace("\n", " ").replace("\r", " ")
+    return text[:limit] + (" [...]" if len(text) > limit else "")
 
 
 class LimitExceeded(Exception):
@@ -106,6 +141,19 @@ class Conversation:
         self.aborted = True
         self._transition("aborted", reason)
 
+    @staticmethod
+    def _clean_bookings(bs):
+        """The provider backend is untrusted: keep only well-formed booking rows
+        so one malformed record cannot crash every turn."""
+        if not isinstance(bs, list):
+            return []
+        return [b for b in bs
+                if isinstance(b, dict)
+                and isinstance(b.get("id"), str)
+                and isinstance(b.get("status"), str)
+                and isinstance(b.get("provider_id"), str)
+                and isinstance(b.get("slot"), str)]
+
     # ------------------------------------------------------------- persistence
     def _save_session(self):
         data = {
@@ -127,12 +175,24 @@ class Conversation:
         authoritative status before doing anything - never rebook blindly."""
         if not os.path.exists(self.session_path):
             return None
-        with open(self.session_path) as f:
-            data = json.load(f)
+        try:
+            with open(self.session_path) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+            # corrupt session must not crash startup: quarantine, start fresh,
+            # and crucially carry no approval/hold forward
+            os.replace(self.session_path, self.session_path + ".corrupt")
+            self.state = "collecting"
+            return ("I couldn't read the saved session, so I started fresh. "
+                    "No pending booking, cancellation or approval was carried over.")
         self.slots = data.get("slots", {})
         self.offers = data.get("offers", [])
         self.hold = data.get("hold")
-        self.approval = Approval.from_dict(data["approval"]) if data.get("approval") else None
+        try:
+            self.approval = (Approval.from_dict(data["approval"])
+                             if data.get("approval") else None)
+        except (KeyError, TypeError):
+            self.approval = None  # malformed approval record is no approval
         self.pending_action = data.get("pending_action")
         self.pending_prompt = data.get("pending_prompt")
         self.last_booking_key = data.get("last_booking_key")
@@ -157,6 +217,23 @@ class Conversation:
             self._transition("await_approval", "restart with unconfirmed booking attempt")
             return ("I was restarted mid-booking and the booking did NOT complete. "
                     "Your approval is still on record; say 'yes' to retry safely.")
+        if self.state == "await_approval" and self.pending_action:
+            pa = self.pending_action
+            if pa.get("type") == "book" and self.hold:
+                return ("Welcome back - you still have a pending proposal: "
+                        f"{self.hold['name']} on {self.hold['slot']} for "
+                        f"Rs.{self.hold['quoted_price']}. Say yes to confirm it or no "
+                        "to drop it.")
+            if pa.get("type") == "cancel":
+                bb = pa.get("booking", {})
+                return (f"Welcome back - you were about to cancel booking {bb.get('id')} "
+                        f"on {bb.get('slot')}. Say yes to confirm the cancellation or "
+                        "no to keep it.")
+            if pa.get("type") == "reschedule":
+                bb = pa.get("booking", {})
+                return (f"Welcome back - you were about to move booking {bb.get('id')} "
+                        f"to {pa.get('new_slot')}. Say yes to confirm or no to keep the "
+                        "original time.")
         return "Welcome back - I restored our previous session."
 
     # ------------------------------------------------------------------- main
@@ -168,9 +245,15 @@ class Conversation:
             return ("I've hit this session's safety limit (turns, tool calls or time), "
                     "so I'm stopping here rather than guessing. Nothing further was booked. "
                     "Please start a fresh session to continue.")
-        self._taken = {(b["provider_id"], b["slot"])
-                       for b in self._call_tool("list_bookings", user_id=self.user_id)
-                       if b["status"] == "booked"}
+        try:
+            self._taken = {(b["provider_id"], b["slot"])
+                           for b in self._clean_bookings(
+                               self._call_tool("list_bookings", user_id=self.user_id))
+                           if b["status"] == "booked"}
+        except LimitExceeded:
+            return ("I've hit this session's safety limit (turns, tool calls or time), "
+                    "so I'm stopping here rather than guessing. Nothing further was booked. "
+                    "Please start a fresh session to continue.")
         self.model_turns += 1
         self.tracer.user_message(message)
         summary = (f"state={self.state};"
@@ -200,8 +283,18 @@ class Conversation:
             key = result.payload["key"]
             self.memory.forget(key)
             return f"Done - I've forgotten your {key.replace('_', ' ')} and won't use it again."
+        if intent == "memory_forget_all":
+            self.memory.forget_all()
+            return ("Done - I've forgotten everything I had stored about you, "
+                    "and none of it will be re-learned.")
         if intent == "memory_set":
             key, value = result.payload["key"], result.payload["value"]
+            if contains_secret(value):
+                return ("That looks like a password, key or token - I don't store "
+                        "secrets as preferences, and I won't keep or show it.")
+            # memory values are display text: flatten lines, strip control
+            # chars and cap length so stored data can't deface later replies
+            value = clean_display(value).replace("\n", " ").replace("\r", " ").strip()[:120]
             if key == "area":
                 value = value.title()
             self.memory.set_stated(key, value)
@@ -229,13 +322,16 @@ class Conversation:
     def _on_slots(self, new_slots, corrected):
         if not corrected and self.state == "done":
             self._reset_for_new_request(new_slots)
-        if self.state == "await_approval" and corrected:
-            # a correction voids any pending hold/approval - whether or not the
-            # user has already said "yes" to it
+        if self.state == "await_approval" and new_slots:
+            # ANY detail change while a proposal awaits confirmation voids it -
+            # whether or not the phrasing sounded like a correction, and whether
+            # or not the user has already said "yes" to it. Otherwise a later
+            # "yes" answering a follow-up question could silently execute the
+            # stale proposal.
             self.approval = None
             self.hold = None
             self.pending_action = None
-            self._transition("collecting", "correction voided approval")
+            self._transition("collecting", "detail changed during approval - proposal voided")
             self.slots.update(new_slots)
             return ("Got it - I've updated "
                     f"{', '.join(new_slots)}. Because a detail changed, the earlier "
@@ -255,7 +351,7 @@ class Conversation:
                     used.append(f"{slot}={v} (remembered)")
         if "time_window" not in self.slots and "earliest_hour" not in self.slots:
             v = self.memory.usable("earliest_time")
-            if v:
+            if v and v in WINDOWS:
                 self.slots["time_window"] = v
                 used.append(f"time={v} (remembered)")
         return used
@@ -294,6 +390,13 @@ class Conversation:
         start, end = self._date_range()
         providers = self._call_tool("search_providers", service=self.slots["service"],
                                     area=self.slots["area"], date_range=[start, end])
+        # the provider backend is untrusted: drop records that violate the
+        # contract instead of crashing or displaying hostile content
+        providers = [p for p in providers if self._provider_ok(p)]
+        for p in providers:
+            p["name"] = clean_display(p["name"]).replace("\n", " ")
+            p["free_slots"] = [sl for sl in (p.get("free_slots") or [])
+                               if _valid_slot(sl)]
         budget = self.slots.get("budget")
         if budget:
             providers = [p for p in providers if p["price"] <= budget]
@@ -329,6 +432,16 @@ class Conversation:
         lines.append("Which one should I go with? (1, 2 or 3)")
         return "\n".join(lines)
 
+    @staticmethod
+    def _provider_ok(p):
+        return (isinstance(p, dict)
+                and isinstance(p.get("id"), str)
+                and isinstance(p.get("name"), str)
+                and _sane_price(p.get("price"))
+                and isinstance(p.get("rating"), (int, float))
+                and not isinstance(p.get("rating"), bool)
+                and math.isfinite(p["rating"]))
+
     def _best_slot(self, provider):
         """Best slot honouring the user's hard constraints; None if none fit -
         never silently falls back to a slot outside the stated window, and never
@@ -336,6 +449,8 @@ class Conversation:
         booking, which would surface as a bogus 'taken by someone else')."""
         slots = provider.get("free_slots", [])
         window = self.slots.get("time_window")
+        if window and window not in WINDOWS:
+            window = None  # never trust a window value outside the known set
         earliest = self.slots.get("earliest_hour")
         taken = getattr(self, "_taken", set())
         for s in sorted(slots):
@@ -377,12 +492,19 @@ class Conversation:
             self.slots = {}
 
     def _last_booking_of(self, service):
-        bookings = [b for b in self._call_tool("list_bookings", user_id=self.user_id)
+        bookings = [b for b in self._clean_bookings(
+                        self._call_tool("list_bookings", user_id=self.user_id))
                     if service and service.split()[0] in (b.get("service") or "")]
         return bookings[-1] if bookings else None
 
     def _on_use_last_provider(self, slots=None):
         slots = slots or {}
+        if self.state == "await_approval" and (self.hold or self.pending_action):
+            # a new request supersedes the pending proposal
+            self.approval = None
+            self.hold = None
+            self.pending_action = None
+            self._transition("collecting", "new request voided pending proposal")
         self._reset_for_new_request(slots)
         self.slots.update(slots)
         service = self.slots.get("service")
@@ -391,7 +513,7 @@ class Conversation:
         if last and last.get("area") and "area" not in self.slots:
             self.slots["area"] = last["area"]
         key = self._tech_key()
-        tech = self.memory.usable(key)
+        tech = self.memory.usable(key) or self.memory.usable("preferred_technician")
         from_history = False
         if not tech and last and last.get("name") and not self.memory.pending_confirmation(key):
             # no preference stored either way: the user explicitly referenced
@@ -429,34 +551,58 @@ class Conversation:
         return f"Got it - I'll look for {tech} (confirmed preferred). " + self._next_step()
 
     def _hold_and_propose(self, provider):
-        details = self._call_tool("get_provider", provider_id=provider["id"])
+        name = clean_display(provider["name"]).replace("\n", " ")
+        # fetch (untrusted) details BEFORE placing a hold, so a hostile or
+        # broken provider response can never leave a live hold the user has
+        # not seen proposed
+        try:
+            details = self._call_tool("get_provider", provider_id=provider["id"])
+        except ToolError:
+            details = None
         slot = self._best_slot(provider)
         if not slot:
-            return f"{provider['name']} has no free slots in your window. Pick another?"
+            return f"{name} has no free slots in your window. Pick another?"
         try:
             hold = self._call_tool("hold_slot", provider_id=provider["id"], slot=slot)
         except ToolError as e:
             if e.code == "slot_unavailable":
-                return (f"That slot was just taken. {provider['name']} also has "
+                return (f"That slot was just taken. {name} also has "
                         f"{', '.join(sorted(provider['free_slots'])[:3])} - want one of those, "
                         "or a different provider?")
             raise
+        if not _hold_ok(hold):
+            return (f"{name} returned a malformed hold, so I did not place anything. "
+                    "Want to pick a different provider?")
+        quoted = hold["quoted_price"]
+        if not _sane_price(quoted):
+            self.hold = None
+            self.pending_action = None
+            return (f"{name} quoted an implausible price ({quoted!r}), so I did not "
+                    "place a hold. Want to pick a different provider?")
         self.hold = {"hold_id": hold["hold_id"], "provider_id": provider["id"],
-                     "name": provider["name"], "slot": slot,
-                     "quoted_price": hold["quoted_price"], "expires_at": hold["expires_at"]}
+                     "name": name, "slot": slot,
+                     "quoted_price": quoted, "expires_at": hold["expires_at"]}
         self.pending_action = {"type": "book"}
         self.offers = []
         self._transition("await_approval", "hold placed")
         search_price = provider["price"]
-        quoted = hold["quoted_price"]
         price_note = (" (note: the provider now quotes "
                       f"Rs.{quoted}, different from the listed Rs.{search_price})"
                       if quoted != search_price else "")
-        review_line = plain({"content": details["reviews"][0]})
-        return (f"{provider['name']}: {details['jobs_completed']} jobs, "
-                f"{details['years_in_business']} yrs in business. {review_line}\n"
-                f"I've placed a 10-minute hold for {slot} at Rs.{quoted}{price_note}.\n"
-                f"Confirm booking {provider['name']} for {slot} at Rs.{quoted}? (yes/no)")
+        info_line = ""
+        if isinstance(details, dict):
+            jobs = details.get("jobs_completed")
+            years = details.get("years_in_business")
+            reviews = details.get("reviews")
+            review = reviews[0] if isinstance(reviews, list) and reviews else None
+            if isinstance(jobs, int) and isinstance(years, int):
+                info_line = f"{name}: {jobs} jobs, {years} yrs in business."
+            if review is not None:
+                # excerpt: redacted, control-stripped, one line, length-capped
+                info_line = (info_line + " " + _review_excerpt(review)).strip()
+        return ((info_line + "\n" if info_line else "")
+                + f"I've placed a 10-minute hold for {slot} at Rs.{quoted}{price_note}.\n"
+                f"Confirm booking {name} for {slot} at Rs.{quoted}? (yes/no)")
 
     # --------------------------------------------------------------- approval
     def _on_confirm(self, message):
@@ -479,7 +625,8 @@ class Conversation:
             status = self._call_tool("get_booking_status",
                                      idempotency_key=self.last_booking_key)
             if status["status"] == "booked":
-                current = next((b for b in self._call_tool("list_bookings", user_id=self.user_id)
+                current = next((b for b in self._clean_bookings(
+                                    self._call_tool("list_bookings", user_id=self.user_id))
                                 if b["id"] == status["booking_id"]), None)
                 if current and current["status"] == "cancelled":
                     return ("That booking was cancelled - there is nothing active to confirm. "
@@ -545,6 +692,16 @@ class Conversation:
                 self._transition("collecting", "slot gone after restart")
                 return "That slot is no longer available. Let's find another - what changed?"
             raise
+        if not _hold_ok(hold):
+            self.approval = None
+            self._transition("collecting", "malformed hold on re-hold")
+            return ("The provider returned a malformed hold on the retry, so I stopped. "
+                    "Nothing was booked. Want to search again?")
+        if not _sane_price(hold["quoted_price"]):
+            self.approval = None
+            self._transition("collecting", "implausible price on re-hold")
+            return (f"The provider quoted an implausible price ({hold['quoted_price']!r}) "
+                    "on the retry, so I stopped. Nothing was booked. Want to search again?")
         self.hold = {"hold_id": hold["hold_id"], "provider_id": a.provider_id,
                      "name": a.provider_id, "slot": a.slot,
                      "quoted_price": hold["quoted_price"], "expires_at": hold["expires_at"]}
@@ -610,6 +767,12 @@ class Conversation:
                             return ("Your hold expired and the slot was taken meanwhile. "
                                     "Nothing was booked. Want me to search again?")
                         raise
+                    if not _hold_ok(hold):
+                        self.booking_in_progress = None
+                        self.approval = None
+                        self._transition("collecting", "malformed hold on re-hold")
+                        return ("The provider returned a malformed hold, so I stopped. "
+                                "Nothing was booked. Want me to search again?")
                     self.hold.update({"hold_id": hold["hold_id"],
                                       "quoted_price": hold["quoted_price"],
                                       "expires_at": hold["expires_at"]})
@@ -658,7 +821,8 @@ class Conversation:
 
     # ----------------------------------------------------------------- cancel
     def _start_cancel(self, service):
-        bookings = [b for b in self._call_tool("list_bookings", user_id=self.user_id)
+        bookings = [b for b in self._clean_bookings(
+                        self._call_tool("list_bookings", user_id=self.user_id))
                     if b["status"] == "booked"]
         if service:
             bookings = [b for b in bookings if service.split()[0] in (b.get("service") or "")
@@ -685,7 +849,22 @@ class Conversation:
         last_err = None
         for _ in range(3):  # contract: first call 503s, retry succeeds
             try:
-                self._call_tool("cancel", booking_id=b["id"], idempotency_key=key)
+                result = self._call_tool("cancel", booking_id=b["id"], idempotency_key=key)
+                if isinstance(result, dict) and result.get("idempotent_replay"):
+                    self.pending_action = None
+                    self._transition("done", "booking was already cancelled")
+                    return (f"Booking {b['id']} was already cancelled - there was "
+                            "nothing left to cancel.")
+                # never claim a cancellation the backend cannot show: verify
+                current = next((x for x in self._clean_bookings(
+                    self._call_tool("list_bookings", user_id=self.user_id))
+                    if x["id"] == b["id"]), None)
+                if current and current["status"] != "cancelled":
+                    self._transition("await_approval", "cancel result unverified")
+                    return ("The provider said the cancellation went through, but the "
+                            f"booking still shows as {current['status']}, so I am NOT "
+                            "treating it as cancelled. Say yes to retry, or check back "
+                            "in a bit.")
                 self.pending_action = None
                 self._transition("done", "cancelled")
                 return f"Cancelled booking {b['id']}. Anything else?"
@@ -704,7 +883,8 @@ class Conversation:
 
     # -------------------------------------------------------------- reschedule
     def _start_reschedule(self, new_slots):
-        bookings = [b for b in self._call_tool("list_bookings", user_id=self.user_id)
+        bookings = [b for b in self._clean_bookings(
+                        self._call_tool("list_bookings", user_id=self.user_id))
                     if b["status"] == "booked"]
         svc = new_slots.get("service")
         if svc:
@@ -754,8 +934,8 @@ class Conversation:
             return f"I stopped before rescheduling: {why}. Please confirm again."
         key = self._idem_key("reschedule", b["id"], new_slot, b["price"])
         try:
-            self._call_tool("reschedule", booking_id=b["id"], new_slot=new_slot,
-                            idempotency_key=key)
+            result = self._call_tool("reschedule", booking_id=b["id"], new_slot=new_slot,
+                                     idempotency_key=key)
         except ToolError as e:
             if e.code == "slot_conflict":
                 self.approval = None
@@ -764,19 +944,32 @@ class Conversation:
                 return (f"That new slot conflicts with another job, so nothing changed - "
                         f"your booking still stands at {b['slot']}. Want a different time?")
             raise
+        # never claim a move the backend cannot show: verify against the listing
+        returned = result.get("booking", {}) if isinstance(result, dict) else {}
+        current = next((x for x in self._clean_bookings(
+            self._call_tool("list_bookings", user_id=self.user_id))
+            if x["id"] == b["id"]), None)
+        if returned.get("slot") != new_slot or (current and current["slot"] != new_slot):
+            self.approval = None
+            self.pending_action = None
+            self._transition("collecting", "reschedule result unverified")
+            return ("The provider did not confirm the new slot (the booking still shows "
+                    f"{current['slot'] if current else b['slot']}), so I am NOT treating "
+                    "it as moved. Your original booking stands. Want to try another time?")
         self.pending_action = None
         self._transition("done", "rescheduled")
         return f"Done - booking {b['id']} moved to {new_slot}. Anything else?"
 
     # ------------------------------------------------------------------- misc
     def _list_bookings(self):
-        bookings = self._call_tool("list_bookings", user_id=self.user_id)
+        bookings = self._clean_bookings(self._call_tool("list_bookings", user_id=self.user_id))
         if not bookings:
             return "You have no bookings yet."
         lines = ["Your bookings:"]
         for b in bookings:
-            lines.append(f"- {b['id']}: {b['provider_id']} on {b['slot']} "
-                         f"(Rs.{b['price']}) - {b['status']}")
+            lines.append(f"- {clean_display(b['id'])}: {clean_display(b['provider_id'])} "
+                         f"on {clean_display(b['slot'])} "
+                         f"(Rs.{b.get('price', '?')}) - {clean_display(b['status'])}")
         return "\n".join(lines)
 
     def _memory_view(self):
