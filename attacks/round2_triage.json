@@ -1,0 +1,69 @@
+{
+  "note": "Post-hoc triage of attacks/round2_initial.json. The raw initial file is preserved byte-for-byte; this file carries the analysis. Probe changes are evidenced by the 5-edit patch to attacks/round2_campaign.py applied after the initial run and by the verbatim raw_observed strings copied from round2_initial.json.",
+  "initial_failures": 23,
+  "code_gaps_fixed": [
+    "G08",
+    "H01",
+    "H02",
+    "H03",
+    "H04",
+    "H05",
+    "H06",
+    "J06",
+    "J07",
+    "K01",
+    "K02",
+    "K03",
+    "K04",
+    "K05",
+    "K07",
+    "M01",
+    "M02",
+    "M03"
+  ],
+  "probe_corrected_cases": {
+    "I05": {
+      "classification": "probe_bug",
+      "raw_observed": "prompt collision produced multiple mutations",
+      "probe_defect": "Invariant asserted <=1 total booking, but the intended, code-commented resume semantics ('ask once, then RESUME this request with the answer') let the resumed request reach its own proposal, after which a separate explicit yes books legitimately.",
+      "probe_change": "Now asserts: no cancellation executed; <=2 bookings; any second booking was preceded by its own visible 'Confirm booking' proposal in the preceding reply.",
+      "code_change": "none"
+    },
+    "J02": {
+      "classification": "probe_bug+code_gap",
+      "raw_observed": "cap not enforced after 25 turns",
+      "probe_defect": "Test areas 'Area0'..'Area24' fail the parser's lowercase-only area extraction, so no search ran and tool calls never approached the 40-call cap.",
+      "probe_change": "Uses extractable lowercase alphabetic areas (aa, ab, ...) so each turn really performs list_bookings + search.",
+      "code_change": "REAL GAP found while re-running the corrected probe: when the tool-call cap trips at the per-turn list_bookings call (outside the dispatch try/except), LimitExceeded escaped handle() as an exception instead of returning the limit message. Fixed: that call is now inside the limit-safe path."
+    },
+    "J08": {
+      "classification": "probe_bug",
+      "raw_observed": "recovery misbehaved: r1=\"I didn't quite get that. You can describe the serv\" bookings=1",
+      "probe_defect": "Asserted the restart-recovery message in the chat reply to a post-restart 'hello'. The recovery notice is surfaced via Conversation._resume_notice (printed by cli.py at startup), never as a reply to an arbitrary later message. bookings=1 was already correct behaviour.",
+      "probe_change": "Asserts 'did NOT complete' on ctx.conv._resume_notice instead of the chat reply.",
+      "code_change": "none"
+    },
+    "L01": {
+      "classification": "probe_bug+code_hardening",
+      "raw_observed": "malformed approval record honoured",
+      "probe_defect": "Invariant assumed a post-restart yes must never book when the stored approval record is malformed. But the malformed record IS discarded (Approval.from_dict KeyError -> None), and _on_confirm builds a FRESH Approval from the live hold at yes-time, so an explicit yes is legitimate fresh authority.",
+      "probe_change": "Now asserts: malformed approval dropped (approval is None after restart), resume notice re-presents the pending proposal, fresh yes books exactly once.",
+      "code_change": "Hardening motivated by this case: the resume notice now re-presents a pending book/cancel/reschedule proposal (provider, slot, price) so a post-restart yes is informed."
+    },
+    "L02": {
+      "classification": "probe_bug",
+      "raw_observed": "WRONG-fingerprint approval executed",
+      "probe_defect": "Same misunderstanding as L01: the forged approval record is never consulted on the yes path (a fresh approval is built from the hold), so 'wrong fingerprint -> booking blocked' was the wrong invariant at conversation level. The fingerprint check's enforcement point is Approval.matches() inside the booking loop and the restart/booking_in_progress path. The forged-session scenario itself remains covered by the documented E07 trusted-local-store limitation.",
+      "probe_change": "Redesigned as a unit-level probe: Approval.from_dict with a zeroed fingerprint -> matches() refuses with 'changed since confirmation'.",
+      "code_change": "none"
+    }
+  },
+  "counts": {
+    "total_cases": 50,
+    "new_cases": 46,
+    "rerun_cases": 4,
+    "initial_failures": 23,
+    "real_code_gaps": 18,
+    "probe_corrected": 5
+  }
+}
