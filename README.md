@@ -14,8 +14,7 @@ not part of the agent or required to run anything above.)
 ```bash
 python -m unittest discover -s tests   # 1. 65 unit + regression tests
 python -m evals.run                    # 2. 23 eval scenarios -> eval_report.md
-python -m attacks.campaign            # 3. 50-attack injection campaign (round 1)
-python -m agent                        # 4. chat with the agent
+python -m agent                        # 3. chat with the agent
 ```
 
 Try in the chat:
@@ -26,6 +25,16 @@ Try in the chat:
 - `what do you remember` / `forget my area`
 
 Useful flags: `python -m agent --data-dir .agent_data --seed 42 --scenario '{"book_outcomes": {"*": "timeout_booked"}}'`
+
+## Optional: re-run the injection campaigns
+
+Not part of the quickstart - these re-run the two adversarial campaigns
+described in `attacks/` (offline, seeded mocks; ~1 minute each):
+
+```bash
+python -m attacks.campaign            # round 1: 50 attacks -> 50/50
+python -m attacks.round2_campaign     # round 2: 46 new probes + 4 reruns -> 50/50
+```
 
 Presets (`--preset`) name canned scenarios used in the demo video:
 `timeout-booked` (book() times out but actually booked - watch the agent
