@@ -5,12 +5,15 @@ mocked provider API. It never double-books, never acts without approval, and
 never gets talked into anything by a provider review.
 
 Pure Python 3.10+, standard library only. Everything runs locally and offline.
+(The agent, mocks, tests and evals are stdlib-only. Only the optional demo
+recording helper `scripts/record_demo.py` needs Pillow to render frames; it is
+not part of the agent or required to run anything above.)
 
 ## Run it (3 commands)
 
 ```bash
-python -m unittest discover -s tests   # 1. 26 unit + regression tests
-python -m evals.run                    # 2. 20 eval scenarios -> eval_report.md
+python -m unittest discover -s tests   # 1. 28 unit + regression tests
+python -m evals.run                    # 2. 23 eval scenarios -> eval_report.md
 python -m agent                        # 3. chat with the agent
 ```
 
@@ -22,6 +25,11 @@ Try in the chat:
 - `what do you remember` / `forget my area`
 
 Useful flags: `python -m agent --data-dir .agent_data --seed 42 --scenario '{"book_outcomes": {"*": "timeout_booked"}}'`
+
+Presets (`--preset`) name canned scenarios used in the demo video:
+`timeout-booked` (book() times out but actually booked - watch the agent
+verify via get_booking_status instead of retrying), `timeout-not-booked`,
+`slot-taken`. Example: `python -m agent --preset timeout-booked --show-trace`.
 
 ## Layout
 
