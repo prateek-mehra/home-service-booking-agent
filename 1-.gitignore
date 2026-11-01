@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.agent_data/
+scripts/.demo_data/
+scripts/.trace_data/
