@@ -5,13 +5,17 @@ import os
 import time
 import uuid
 
-from .sanitize import quote_untrusted
+from .sanitize import quote_untrusted, redact_secrets
 
 # fields whose values are untrusted free text
 _UNTRUSTED_FIELDS = {"reviews", "review", "notes", "free_text"}
 
 
 def _sanitise(value):
+    if isinstance(value, str):
+        # traces carry no secrets: redact credential-shaped patterns in EVERY
+        # string field, not only the designated untrusted-review fields
+        return redact_secrets(value)
     if isinstance(value, dict):
         return {k: ([quote_untrusted(v) for v in val] if k in _UNTRUSTED_FIELDS and isinstance(val, list)
                     else quote_untrusted(val) if k in _UNTRUSTED_FIELDS
