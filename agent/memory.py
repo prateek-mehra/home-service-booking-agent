@@ -16,10 +16,14 @@ class MemoryStore:
         self.facts = {}       # key -> {value, source: stated|inferred, confirmed: bool, updated_at}
         self.tombstones = set()
         if os.path.exists(path):
-            with open(path) as f:
-                data = json.load(f)
-            self.facts = data.get("facts", {})
-            self.tombstones = set(data.get("tombstones", []))
+            try:
+                with open(path) as f:
+                    data = json.load(f)
+                self.facts = data.get("facts", {})
+                self.tombstones = set(data.get("tombstones", []))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                # corrupt state must not crash startup: quarantine and start clean
+                os.replace(path, path + ".corrupt")
 
     def _save(self):
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
@@ -73,6 +77,15 @@ class MemoryStore:
         if f and f["source"] == "inferred" and not f["confirmed"] and not self._blocked(key):
             return f["value"]
         return None
+
+    def forget_all(self):
+        """Forget everything: remove every fact and tombstone every key family,
+        so nothing is ever re-inferred."""
+        for k in list(self.facts):
+            self.tombstones.add(k)
+            self.tombstones.add(k.split(":")[0])
+        self.facts = {}
+        self._save()
 
     def forget(self, key):
         """Forget a fact forever: remove it and every scoped variant, and block
