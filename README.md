@@ -44,6 +44,6 @@ verify via get_booking_status instead of retrying), `timeout-not-booked`,
 - `agent/trace.py` - one JSONL trace per run
 - `evals/` - scripted-user scenarios, generated `eval_report.md`
 - `tests/` - unit + regression tests (`BUGS.md` describes the regressions)
-- `attacks/` - round-1 injection campaign: 50 attacks, full metadata, before/after results and the fixes they drove
+- `attacks/` - two injection-campaign rounds (50 cases each, all passing), full metadata, before/after results and the fixes they drove
 - `traces/timeout-after-success.jsonl` - checked-in end-to-end trace
 - `DESIGN.md` - design note; `BUGS.md` - three real bugs hit while building
