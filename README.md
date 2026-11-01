@@ -1,13 +1,9 @@
 # Home-Service Booking Agent
 
 A chat agent that books, reschedules and cancels home-service errands against a
-mocked provider API. It never double-books, never acts without approval, and
-never gets talked into anything by a provider review.
+mocked provider API.
 
-Pure Python 3.10+, standard library only. Everything runs locally and offline.
-(The agent, mocks, tests and evals are stdlib-only. The optional demo recorder
-`scripts/record_demo.py` needs Pillow and ffmpeg; it is not part of the agent or
-required to run anything above.)
+Python 3.10+. Everything runs locally and offline.
 
 ## High-level design
 
@@ -83,25 +79,24 @@ Presets (`--preset`) name canned scenarios used in the demo video:
 verify via get_booking_status instead of retrying), `timeout-not-booked`,
 `slot-taken`. Example: `python3 -m agent --preset timeout-booked --show-trace`.
 
-Record the 3:25 chat-and-trace demo with:
-
-```bash
-python3 scripts/record_demo.py /path/to/demo.mp4
-```
-
 ## Layout
 
-- `agent/mock_tools.py` - the fixed tool contract, seeded and scenario-configurable
-- `agent/conversation.py` - the workflow state machine and all enforced invariants
-- `agent/approval.py` - approval records (bound to action + provider + slot + price)
-- `agent/memory.py` - persistent preferences, stated vs inferred, forget with tombstones
-- `agent/model.py` - pluggable model layer; default is a deterministic scripted
-  model (the evals run against it, per the offline-reproducibility requirement);
-  an LLM adapter can implement the same `interpret()` interface
-- `agent/trace.py` - one JSONL trace per run
-- `evals/` - scripted-user scenarios, generated `eval_report.md`
-- `tests/` - unit + regression tests (`BUGS.md` describes the regressions)
-- `attacks/` - three injection-campaign rounds (50 cases each, all passing), full metadata, before/after results and the fixes they drove
-- `traces/timeout-after-success.jsonl` - checked-in end-to-end trace
-- `docs/` - natural-language guides to the tests, evals and high-level design
-- `DESIGN.md` - design note; `BUGS.md` - three real bugs hit while building
+```mermaid
+flowchart TD
+    ROOT[Repository]
+    ROOT --> AGENT[agent/]
+    AGENT --> CONV[conversation.py<br/>workflow and guardrails]
+    AGENT --> MODEL[model.py<br/>scripted intent parser]
+    AGENT --> TOOLS[mock_tools.py<br/>provider API]
+    AGENT --> APPROVAL[approval.py]
+    AGENT --> MEMORY[memory.py]
+    AGENT --> TRACE[trace.py]
+    ROOT --> TESTS[tests/<br/>unit and regression tests]
+    ROOT --> EVALS[evals/<br/>scripted scenarios]
+    EVALS --> REPORT[eval_report.md<br/>generated results]
+    ROOT --> ATTACKS[attacks/<br/>injection campaigns]
+    ROOT --> DOCS[docs/<br/>tests, evals, HLD]
+    ROOT --> TRACES[traces/<br/>timeout recovery example]
+    ROOT --> README[README.md<br/>quickstart and overview]
+    ROOT --> DESIGN[DESIGN.md and BUGS.md]
+```
