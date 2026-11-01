@@ -46,6 +46,10 @@ flowchart TD
 Provider reviews enter as untrusted data. They do not enter the model's intent
 parser or bypass the approval check.
 
+See [the architecture notes](docs/high-level-design.md), [test guide](docs/tests.md),
+and [eval guide](docs/evals.md) for the component responsibilities and what each
+check covers.
+
 ## Run it (3 commands)
 
 ```bash
@@ -99,4 +103,5 @@ python3 scripts/record_demo.py /path/to/demo.mp4
 - `tests/` - unit + regression tests (`BUGS.md` describes the regressions)
 - `attacks/` - three injection-campaign rounds (50 cases each, all passing), full metadata, before/after results and the fixes they drove
 - `traces/timeout-after-success.jsonl` - checked-in end-to-end trace
+- `docs/` - natural-language guides to the tests, evals and high-level design
 - `DESIGN.md` - design note; `BUGS.md` - three real bugs hit while building
