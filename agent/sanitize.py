@@ -8,11 +8,12 @@ text cannot leak credentials or hijack the user's display.
 import re
 
 _SECRET = re.compile(
-    r"(?i)(api[_-]?key|password|secret|token|passwd|credential|private[_-]?key)"
+    r"(api[_-]?key|password|secret|token|passwd|credential|private[_-]?key)"
     r"\s*[:=]\s*\S+"
     r"|AKIA[0-9A-Z]{16}"                                   # AWS access key id
-    r"|(?i)bearer\s+[A-Za-z0-9._\-]{8,}"                # bearer tokens
-    r"|-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----"
+    r"|bearer\s+[A-Za-z0-9._\-]{8,}"                # bearer tokens
+    r"|-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----",
+    re.IGNORECASE,
 )
 _CONTROL = re.compile(
     r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f"

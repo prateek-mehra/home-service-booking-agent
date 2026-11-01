@@ -58,6 +58,7 @@ class TestBug4CorrectionBeforeYesVoidsHold(unittest.TestCase):
     def test_correction_before_confirm_voids_hold(self):
         c = Conversation(user_id="u", data_dir=tempfile.mkdtemp(),
                          scenario={"book_outcomes": {"*": "success"}})
+        self.addCleanup(c.tracer.close)
         c.handle("Find a plumber in Marathahalli this week")
         c.handle("1")                      # hold placed, no approval yet
         self.assertEqual(c.state, "await_approval")
@@ -74,12 +75,14 @@ class TestReviewFinding1WindowNeverViolated(unittest.TestCase):
     def test_no_fallback_outside_window(self):
         c = Conversation(user_id="u", data_dir=tempfile.mkdtemp(), seed=39,
                          scenario={"book_outcomes": {"*": "success"}})
+        self.addCleanup(c.tracer.close)
         c.slots["time_window"] = "morning"
         self.assertIsNone(c._best_slot({"free_slots": ["2026-11-02T18:00:00"]}))
 
     def test_offered_providers_all_fit_window(self):
         c = Conversation(user_id="u", data_dir=tempfile.mkdtemp(), seed=39,
                          scenario={"book_outcomes": {"*": "success"}})
+        self.addCleanup(c.tracer.close)
         r = c.handle("Find a cleaning in Whitefield this week, mornings only")
         self.assertTrue("None of the" in r or "Which one" in r)
         for p in c.offers:
@@ -111,6 +114,7 @@ class TestReviewFinding3CancelThenRebook(unittest.TestCase):
     def test_rebook_after_cancel_is_fresh(self):
         c = Conversation(user_id="u", data_dir=tempfile.mkdtemp(),
                          scenario={"book_outcomes": {"*": "success"}})
+        self.addCleanup(c.tracer.close)
         c.handle("Find a plumber in Marathahalli this week")
         c.handle("1")
         c.handle("yes")
@@ -137,6 +141,7 @@ class TestReviewFinding5HoldStormBounded(unittest.TestCase):
         c = Conversation(user_id="u", data_dir=tempfile.mkdtemp(),
                          scenario={"book_outcomes": {"*": "success"},
                                    "expire_holds": True})
+        self.addCleanup(c.tracer.close)
         c.handle("Find a plumber in Marathahalli this week")
         c.handle("1")
         # fresh holds expire instantly; booking can never complete
@@ -167,6 +172,7 @@ class TestReviewFinding10CrashSafety(unittest.TestCase):
     def test_handle_never_raises(self):
         c = Conversation(user_id="u", data_dir=tempfile.mkdtemp(),
                          scenario={"book_outcomes": {"*": "success"}})
+        self.addCleanup(c.tracer.close)
         c.handle("Find a plumber in Marathahalli this week")
         c.handle("1")
         c.handle("yes")
@@ -181,6 +187,7 @@ class TestReviewFinding11CancelApprovalChecked(unittest.TestCase):
     def test_cancel_checks_approval_record(self):
         c = Conversation(user_id="u", data_dir=tempfile.mkdtemp(),
                          scenario={"book_outcomes": {"*": "success"}})
+        self.addCleanup(c.tracer.close)
         c.handle("Find a plumber in Marathahalli this week")
         c.handle("1")
         c.handle("yes")
@@ -228,6 +235,7 @@ class TestRetestOwnSlotNeverReproposed(unittest.TestCase):
         d = tempfile.mkdtemp()
         c1 = Conversation(user_id="u", data_dir=d, seed=7,
                           scenario={"book_outcomes": {"*": "success"}})
+        self.addCleanup(c1.tracer.close)
         c1.handle("Find a plumber in Marathahalli this week")
         c1.handle("1")
         c1.handle("yes")
@@ -240,6 +248,7 @@ class TestRetestOwnSlotNeverReproposed(unittest.TestCase):
         # restart over the same data, then repeat the same request
         c2 = Conversation(user_id="u", data_dir=d, seed=7,
                           scenario={"book_outcomes": {"*": "success"}})
+        self.addCleanup(c2.tracer.close)
         c2.handle("Find a plumber in Marathahalli this week")
         own_offer = next((p for p in c2.offers if p["id"] == own_pid), None)
         self.assertIsNotNone(own_offer, "repro needs the same provider offered")

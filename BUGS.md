@@ -203,3 +203,12 @@ All fixed; each has a named guard in tests/test_injection_regressions2.py:
 - **L01 (low, hardening)**: a restart into a pending proposal did not
   re-present it. Fix: the resume notice re-states the pending
   book/cancel/reschedule proposal so a post-restart "yes" is informed.
+
+## Runtime compatibility issue found in the independent review
+
+Python 3.12 rejected the sanitizer's regular expression at import time because
+an inline case-insensitive flag appeared after an alternation. This prevented
+the app and three test modules from loading. The expression now uses the
+compile-level `re.IGNORECASE` flag; the full suite and all evals load and pass
+on Python 3.12. The independent round-3 report is stored in
+`attacks/round3_final.json`.

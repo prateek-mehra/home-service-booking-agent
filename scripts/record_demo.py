@@ -24,8 +24,27 @@ FPS = 3
 W, H = 1760, 960
 COLS = 2
 LEFT_W = 980
-FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 16)
-FONT_B = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 17)
+def load_font(size, bold=False):
+    candidates = ([
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 0),
+        ("/System/Library/Fonts/Menlo.ttc", 1),
+        ("/Library/Fonts/DejaVuSansMono-Bold.ttf", 0),
+    ] if bold else [
+        ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 0),
+        ("/System/Library/Fonts/Menlo.ttc", 0),
+        ("/Library/Fonts/DejaVuSansMono.ttf", 0),
+    ])
+    for path, index in candidates:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size, index=index)
+            except OSError:
+                pass
+    return ImageFont.load_default()
+
+
+FONT = load_font(16)
+FONT_B = load_font(17, bold=True)
 LINE_H = 21
 PAD = 14
 HEADER_H = 40
